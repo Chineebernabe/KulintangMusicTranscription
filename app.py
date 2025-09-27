@@ -125,6 +125,8 @@ def main():
                 prediction = model.predict_proba(input)
                 if max(prediction[0]) > Confidence_threshold:
                     predictions.append(np.argmax(prediction[0]))
+                else:
+                    predictions.append(None)
 
             df = pd.DataFrame({
                 'start_time': [interval[0] for interval in non_silent_intervals],
