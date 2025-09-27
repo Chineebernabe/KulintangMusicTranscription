@@ -6,9 +6,10 @@ import os
 import pickle
 import cv2
 import subprocess
+import streamlit as st
+from tempfile import NamedTemporaryFile
 
-video_path = ".mov"
-Segment_output_path = "/content/video_segments"
+Segment_output_path = "video_segments"
 audio_output_path = "audio.wav"
 model_path = "rf_best_model.pkl"
 
@@ -85,94 +86,77 @@ def extract_features(audio_path):
 
     return audio_dict
 
-non_silent_intervals = extract_silent_timestamps(video_path, audio_output_path)
-video_name = video_path.split("/")[-1].split(".")[0]
-split_video(video_path, video_name, Segment_output_path, non_silent_intervals)
+def main():
+    st.title("Kulintang Music Transcription")
+    st.write("Upload a video to transcribe and overlay detections.")
 
-# Removing Noises
-Confidence_threshold = 0.7
+    uploaded_file = st.file_uploader("Upload Video", type=["mp4", "mov"])
+    if uploaded_file is not None:
+        with NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
+            temp_video.write(uploaded_file.read())
+            temp_video_path = temp_video.name
 
-with open(model_path, 'rb') as file:
-    model = pickle.load(file)
+        st.info("Processing video...")
+        # Run the main pipeline
+        try:
+            # Use temp_video_path instead of video_path
+            non_silent_intervals = extract_silent_timestamps(temp_video_path, audio_output_path)
+            video_name = temp_video_path.split("/")[-1].split(".")[0]
+            split_video(temp_video_path, video_name, Segment_output_path, non_silent_intervals)
 
-segments = os.listdir(Segment_output_path)
-predictions = []
-for segment in segments:
-  segment_path = os.path.join(Segment_output_path, segment)
-  extract_audio(segment_path)
-  audio_dict = extract_features("audio1.wav")
-  input = pd.DataFrame([audio_dict])
-  prediction = model.predict_proba(input)
-  if max(prediction[0]) > Confidence_threshold:
-    predictions.append(np.argmax(prediction[0]))
-    print(prediction)
+            with open(model_path, 'rb') as file:
+                model = pickle.load(file)
 
-# Record the predictions with their intervals
-df = pd.DataFrame({
-    'start_time': [interval[0] for interval in non_silent_intervals],
-    'end_time': [interval[1] for interval in non_silent_intervals],
-    'prediction': predictions
-})
-df.to_csv("predictions.csv", index = False)
+            segments = os.listdir(Segment_output_path)
+            predictions = []
+            Confidence_threshold = 0.7
+            for segment in segments:
+                segment_path = os.path.join(Segment_output_path, segment)
+                extract_audio(segment_path)
+                audio_dict = extract_features("audio1.wav")
+                input = pd.DataFrame([audio_dict])
+                prediction = model.predict_proba(input)
+                if max(prediction[0]) > Confidence_threshold:
+                    predictions.append(np.argmax(prediction[0]))
 
-# Overlay the prediction on the video
+            df = pd.DataFrame({
+                'start_time': [interval[0] for interval in non_silent_intervals],
+                'end_time': [interval[1] for interval in non_silent_intervals],
+                'prediction': predictions
+            })
+            df.to_csv("predictions.csv", index = False)
 
-# Load the CSV with float seconds directly
-df = pd.read_csv('predictions.csv')  # Columns: start_time, end_time, prediction
+            # Overlay predictions on video
+            cap = cv2.VideoCapture(temp_video_path)
+            if not cap.isOpened():
+                st.error(f"Cannot open video file: {temp_video_path}")
+                return
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter('output_video.mp4', fourcc, fps, (width, height))
+            frame_idx = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                current_sec = frame_idx / fps
+                active_predictions = df[(df['start_time'] <= current_sec) & (df['end_time'] >= current_sec)]
+                y_offset = 50
+                for _, row in active_predictions.iterrows():
+                    text = f"Prediction: {row['prediction']}"
+                    cv2.putText(frame, text, (50, y_offset), cv2.FONT_HERSHEY_SIMPLEX,
+                                1, (0, 255, 0), 2, cv2.LINE_AA)
+                    y_offset += 40
+                out.write(frame)
+                frame_idx += 1
+            cap.release()
+            out.release()
+            st.success("Video processing complete. Output saved as output_video.mp4")
+            st.video("output_video.mp4")
+        except Exception as e:
+            st.error(f"Error: {e}")
 
-# Open the video file
-cap = cv2.VideoCapture(video_path)
-if not cap.isOpened():
-    raise IOError(f"Cannot open video file: {video_path}")
-
-# Get video properties
-fps = cap.get(cv2.CAP_PROP_FPS)
-width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-# Define the output video writer
-fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-out = cv2.VideoWriter('output_video.mp4', fourcc, fps, (width, height))
-
-# Process frames
-frame_idx = 0
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
-
-    current_sec = frame_idx / fps
-
-    # Get predictions active at this time
-    active_predictions = df[(df['start_time'] <= current_sec) & (df['end_time'] >= current_sec)]
-
-    # Overlay text
-    y_offset = 50
-    for _, row in active_predictions.iterrows():
-        text = f"Prediction: {row['prediction']}"
-        cv2.putText(frame, text, (50, y_offset), cv2.FONT_HERSHEY_SIMPLEX,
-                    1, (0, 255, 0), 2, cv2.LINE_AA)
-        y_offset += 40
-
-    out.write(frame)
-    frame_idx += 1
-
-# Clean up
-cap.release()
-out.release()
-print("✅ Video processing complete. Output saved as output_video.mp4")
-
-# !ffmpeg -i output_video.mp4 -i "/content/drive/MyDrive/1:1_Chinee_Bernabe/Kulintang/Dataset/Kulintang St Scholastica College/IMG_0010.MOV" -c:v copy -map 0:v:0 -map 1:a:0 -shortest final_output_with_audio.mp4
-cmd = [
-    "ffmpeg",
-    "-i", "output_video.mp4",
-    "-i", "/content/drive/MyDrive/1:1_Chinee_Bernabe/Kulintang/Dataset/Kulintang St Scholastica College/IMG_0010.MOV",
-    "-c:v", "copy",
-    "-map", "0:v:0",
-    "-map", "1:a:0",
-    "-shortest",
-    "final_output_with_audio.mp4"
-]
-
-# Run command
-result = subprocess.run(cmd, capture_output=True, text=True)
+if __name__ == "__main__":
+    main()
