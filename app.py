@@ -9,9 +9,15 @@ import subprocess
 import streamlit as st
 from tempfile import NamedTemporaryFile
 
-Segment_output_path = "video_segments"
-audio_output_path = "audio.wav"
-model_path = "rf_best_model.pkl"
+
+import tempfile
+
+# Use temporary directories for all file storage
+temp_dir = tempfile.TemporaryDirectory()
+Segment_output_path = os.path.join(temp_dir.name, "video_segments")
+os.makedirs(Segment_output_path, exist_ok=True)
+audio_output_path = os.path.join(temp_dir.name, "audio.wav")
+model_path = os.path.join(os.getcwd(), "rf_best_model.pkl")
 
 # Segment video based on the silence intervals
 def extract_silent_timestamps(input_video_path: str, audio_output_path: str, top_db: int = 20 ):
@@ -52,11 +58,12 @@ def split_video(input_file: str, output_prefix: str, output_path: str, intervals
 
 # Load the video file
 def extract_audio(video_path):
-  video = VideoFileClip(video_path)
-
-  # Extract and save the audio
-  audio = video.audio
-  audio.write_audiofile("audio1.wav")
+        video = VideoFileClip(video_path)
+        # Extract and save the audio
+        audio_path = os.path.join(temp_dir.name, "audio1.wav")
+        audio = video.audio
+        audio.write_audiofile(audio_path)
+        return audio_path
 
 #function to extract features from audion files
 def extract_features(audio_path):
@@ -112,8 +119,8 @@ def main():
             Confidence_threshold = 0.7
             for segment in segments:
                 segment_path = os.path.join(Segment_output_path, segment)
-                extract_audio(segment_path)
-                audio_dict = extract_features("audio1.wav")
+                audio_path = extract_audio(segment_path)
+                audio_dict = extract_features(audio_path)
                 input = pd.DataFrame([audio_dict])
                 prediction = model.predict_proba(input)
                 if max(prediction[0]) > Confidence_threshold:
@@ -124,7 +131,8 @@ def main():
                 'end_time': [interval[1] for interval in non_silent_intervals],
                 'prediction': predictions
             })
-            df.to_csv("predictions.csv", index = False)
+            predictions_csv_path = os.path.join(temp_dir.name, "predictions.csv")
+            df.to_csv(predictions_csv_path, index = False)
 
             # Overlay predictions on video
             cap = cv2.VideoCapture(temp_video_path)
@@ -134,8 +142,7 @@ def main():
             fps = cap.get(cv2.CAP_PROP_FPS)
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            with NamedTemporaryFile(delete=False, suffix=".mp4") as temp_output_video:
-                output_video_path = temp_output_video.name
+            output_video_path = os.path.join(temp_dir.name, "output_video.mp4")
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
             frame_idx = 0
