@@ -134,8 +134,10 @@ def main():
             fps = cap.get(cv2.CAP_PROP_FPS)
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            with NamedTemporaryFile(delete=False, suffix=".mp4") as temp_output_video:
+                output_video_path = temp_output_video.name
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter('output_video.mp4', fourcc, fps, (width, height))
+            out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
             frame_idx = 0
             while True:
                 ret, frame = cap.read()
@@ -153,8 +155,17 @@ def main():
                 frame_idx += 1
             cap.release()
             out.release()
-            st.success("Video processing complete. Output saved as output_video.mp4")
-            st.video("output_video.mp4")
+            st.success("Video processing complete.")
+            st.header("Output Preview")
+            st.video(output_video_path)
+            st.write("You can preview the processed video above. If satisfied, download it below:")
+            with open(output_video_path, "rb") as f:
+                st.download_button(
+                    label="Download processed video",
+                    data=f,
+                    file_name="output_with_detections.mp4",
+                    mime="video/mp4"
+                )
         except Exception as e:
             st.error(f"Error: {e}")
 
