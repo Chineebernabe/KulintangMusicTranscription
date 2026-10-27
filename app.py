@@ -165,9 +165,9 @@ def main():
             cap.release()
             out.release()
             st.success("Video processing complete.")
-            st.header("Output Preview")
-            st.video(output_video_path)
-            st.write("You can preview the processed video above. If satisfied, download it below:")
+            # st.header("Output Preview")
+            # st.video(output_video_path)
+            st.write("Download your output video below:")
             with open(output_video_path, "rb") as f:
                 st.download_button(
                     label="Download processed video",
